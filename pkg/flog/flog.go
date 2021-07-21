@@ -1,4 +1,4 @@
-// Copyright 2018-2020 Burak Sezer
+// Copyright 2018-2021 Burak Sezer
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /*Package flog is a simple wrapper around Golang's log package which adds verbosity support.*/
-package flog
+package flog // import "github.com/buraksezer/olric/pkg/flog"
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ import (
 /*
 Derived from kubernetes/klog:
   * flog.V(1) - Generally useful for this to ALWAYS be visible to an operator
-    * Programmer errors
+    * Programmer errors:
     * Logging extra info about a panic
     * CLI argument handling
   * flog.V(2) - A reasonable default log level if you don't want verbosity.

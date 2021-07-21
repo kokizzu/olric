@@ -1,4 +1,4 @@
-// Copyright 2018-2020 Burak Sezer
+// Copyright 2018-2021 Burak Sezer
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,40 +15,39 @@
 package olric
 
 import (
-	"context"
+	"bytes"
 	"testing"
+
+	"github.com/buraksezer/olric/internal/protocol"
+	"github.com/buraksezer/olric/internal/testutil"
+	"github.com/buraksezer/olric/internal/testutil/assert"
+	"github.com/buraksezer/olric/stats"
 )
 
-func TestStatsStandalone(t *testing.T) {
-	db, err := newDB(testSingleReplicaConfig())
-	if err != nil {
-		t.Fatalf("Expected nil. Got: %v", err)
-	}
-	defer func() {
-		err = db.Shutdown(context.Background())
-		if err != nil {
-			db.log.V(2).Printf("[ERROR] Failed to shutdown Olric: %v", err)
-		}
-	}()
+func TestOlric_Stats(t *testing.T) {
+	db, err := newTestOlric(t)
+	assert.NoError(t, err)
 
 	dm, err := db.NewDMap("mymap")
-	if err != nil {
-		t.Fatalf("Expected nil. Got: %v", err)
-	}
+	assert.NoError(t, err)
+
 	for i := 0; i < 100; i++ {
-		err = dm.Put(bkey(i), bval(i))
-		if err != nil {
-			t.Fatalf("Expected nil. Got: %v", err)
-		}
+		err = dm.Put(testutil.ToKey(i), testutil.ToVal(i))
+		assert.NoError(t, err)
 	}
 
 	s, err := db.Stats()
-	if err != nil {
-		t.Fatalf("Expected nil. Got: %v", err)
+	assert.NoError(t, err)
+
+	if s.ClusterCoordinator.ID != db.rt.This().ID {
+		t.Fatalf("Expected cluster coordinator: %v. Got: %v", db.rt.This(), s.ClusterCoordinator)
 	}
 
-	if !cmpMembersByID(s.ClusterCoordinator, db.this) {
-		t.Fatalf("Expected cluster coordinator: %v. Got: %v", db.this, s.ClusterCoordinator)
+	assert.Equal(t, s.Member.Name, db.rt.This().Name)
+	assert.Equal(t, s.Member.ID, db.rt.This().ID)
+	assert.Equal(t, s.Member.Birthdate, db.rt.This().Birthdate)
+	if s.Runtime != nil {
+		t.Error("Runtime stats must not be collected by default:", s.Runtime)
 	}
 
 	var total int
@@ -64,80 +63,39 @@ func TestStatsStandalone(t *testing.T) {
 		if part.Length <= 0 {
 			t.Fatalf("Unexpected Length: %d", part.Length)
 		}
-		if !cmpMembersByID(part.Owner, db.this) {
-			t.Fatalf("Expected partition owner: %s. Got: %s", db.this, part.Owner)
-		}
 	}
 	if total != 100 {
 		t.Fatalf("Expected total length of partition in stats is 100. Got: %d", total)
 	}
+	_, ok := s.ClusterMembers[stats.MemberID(db.rt.This().ID)]
+	if !ok {
+		t.Fatalf("Expected member ID: %d could not be found in ClusterMembers", db.rt.This().ID)
+	}
 }
 
-func TestStatsCluster(t *testing.T) {
-	db1, err := newDB(nil)
-	if err != nil {
-		t.Fatalf("Expected nil. Got: %v", err)
-	}
-	defer func() {
-		err = db1.Shutdown(context.Background())
-		if err != nil {
-			db1.log.V(2).Printf("[ERROR] Failed to shutdown Olric: %v", err)
-		}
-	}()
+func TestOlric_Stats_CollectRuntime(t *testing.T) {
+	db, err := newTestOlric(t)
+	assert.NoError(t, err)
 
-	db2, err := newDB(nil, db1)
-	if err != nil {
-		t.Fatalf("Expected nil. Got: %v", err)
-	}
-	defer func() {
-		err = db2.Shutdown(context.Background())
-		if err != nil {
-			db2.log.V(2).Printf("[ERROR] Failed to shutdown Olric: %v", err)
-		}
-	}()
-	syncClusterMembers(db1, db2)
+	s, err := db.Stats(CollectRuntime())
+	assert.NoError(t, err)
 
-	dm, err := db1.NewDMap("mymap")
-	if err != nil {
-		t.Fatalf("Expected nil. Got: %v", err)
+	if s.Runtime == nil {
+		t.Fatal("Runtime stats must be collected by default:", s.Runtime)
 	}
-	for i := 0; i < 100; i++ {
-		err = dm.Put(bkey(i), bval(i))
-		if err != nil {
-			t.Fatalf("Expected nil. Got: %v", err)
-		}
-	}
-	var primaryTotal int
-	var backupTotal int
-	for _, db := range []*Olric{db1, db2} {
-		s, err := db.Stats()
-		if err != nil {
-			t.Fatalf("Expected nil. Got: %v", err)
-		}
-		for _, part := range s.Partitions {
-			primaryTotal += part.Length
-		}
-		for _, part := range s.Backups {
-			backupTotal += part.Length
-		}
-	}
-	if primaryTotal != 100 {
-		t.Fatalf("Expected total length of partitions on primary "+
-			"owners in stats is 100. Got: %d", primaryTotal)
-	}
-	if backupTotal != 100 {
-		t.Fatalf("Expected total length of partitions on backup "+
-			"owners in stats is 100. Got: %d", backupTotal)
-	}
+}
 
-	t.Run("check ClusterCoordinator", func(t *testing.T) {
-		s, err := db2.Stats()
-		if err != nil {
-			t.Fatalf("Expected nil. Got: %v", err)
-		}
+func TestOlric_Stats_Operation(t *testing.T) {
+	db, err := newTestOlric(t)
+	assert.NoError(t, err)
 
-		if !cmpMembersByID(s.ClusterCoordinator, db1.this) {
-			t.Fatalf("Expected cluster coordinator: %v. Got: %v", db1.this, s.ClusterCoordinator)
-		}
-	})
+	buf := new(bytes.Buffer)
+	req := protocol.NewSystemMessage(protocol.OpStats)
+	req.SetExtra(protocol.StatsExtra{})
+	req.SetBuffer(buf)
+	err = req.Encode()
+	assert.NoError(t, err)
+	resp := req.Response(nil)
+	db.statsOperation(resp, req)
+	assert.Equal(t, protocol.StatusOK, resp.Status())
 }

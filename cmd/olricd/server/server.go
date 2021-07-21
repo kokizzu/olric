@@ -1,4 +1,4 @@
-// Copyright 2018-2020 Burak Sezer
+// Copyright 2018-2021 Burak Sezer
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ type Olricd struct {
 	log    *log.Logger
 	config *config.Config
 	db     *olric.Olric
-	errgr  errgroup.Group
+	errGr  errgroup.Group
 }
 
 // New creates a new Server instance
@@ -50,13 +50,15 @@ func (s *Olricd) waitForInterrupt() {
 	s.log.Printf("[olricd] Signal catched: %s", ch.String())
 
 	// Awaits for shutdown
-	s.errgr.Go(func() error {
+	s.errGr.Go(func() error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
 		if err := s.db.Shutdown(ctx); err != nil {
 			s.log.Printf("[olricd] Failed to shutdown Olric: %v", err)
 			return err
 		}
+
 		return nil
 	})
 
@@ -64,10 +66,12 @@ func (s *Olricd) waitForInterrupt() {
 	go func() {
 		s.log.Printf("[olricd] Awaiting for background tasks")
 		s.log.Printf("[olricd] Press CTRL+C or send SIGTERM/SIGINT to quit immediately")
+
 		forceQuitCh := make(chan os.Signal, 1)
 		signal.Notify(forceQuitCh, syscall.SIGTERM, syscall.SIGINT)
 		ch := <-forceQuitCh
-		s.log.Printf("[olricd] Signal catched: %s", ch.String())
+
+		s.log.Printf("[olricd] Signal caught: %s", ch.String())
 		s.log.Printf("[olricd] Quits with exit code 1")
 		os.Exit(1)
 	}()
@@ -75,6 +79,7 @@ func (s *Olricd) waitForInterrupt() {
 
 // Start starts a new olricd server instance and blocks until the server is closed.
 func (s *Olricd) Start() error {
+	s.log.Printf("[olricd] pid: %d has been started", os.Getpid())
 	// Wait for SIGTERM or SIGINT
 	go s.waitForInterrupt()
 
@@ -83,13 +88,14 @@ func (s *Olricd) Start() error {
 		return err
 	}
 	s.db = db
-	s.log.Printf("[olricd] pid: %d has been started on %s:%d", os.Getpid(), s.config.BindAddr, s.config.BindPort)
-	s.errgr.Go(func() error {
+
+	s.errGr.Go(func() error {
 		if err = s.db.Start(); err != nil {
 			s.log.Printf("[olricd] Failed to run Olric: %v", err)
 			return err
 		}
 		return nil
 	})
-	return s.errgr.Wait()
+
+	return s.errGr.Wait()
 }

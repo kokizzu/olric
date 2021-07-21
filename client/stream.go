@@ -1,4 +1,4 @@
-// Copyright 2018-2020 Burak Sezer
+// Copyright 2018-2021 Burak Sezer
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -57,10 +57,10 @@ func newListener() *listener {
 type stream struct {
 	mu sync.RWMutex
 
+	pongReceivedAt int64
 	listeners      map[uint64]*listener
 	read           chan protocol.EncodeDecoder
 	write          chan protocol.EncodeDecoder
-	pongReceivedAt int64
 	errCh          chan error
 	ctx            context.Context
 	cancel         context.CancelFunc
